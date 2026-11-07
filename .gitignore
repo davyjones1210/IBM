@@ -1,0 +1,7 @@
+# Large challenge data is supplied separately and should stay local.
+data/data/
+
+# Python bytecode and cache directories.
+__pycache__/
+**/__pycache__/
+*.py[cod]
