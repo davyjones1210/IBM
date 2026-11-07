@@ -1,0 +1,32 @@
+{
+  "training_examples": 75149,
+  "training_positives": 73,
+  "benchmark_rows": 72670,
+  "top500_rows": 500,
+  "holdout": {
+    "months": "2025-07 through 2025-09",
+    "examples": 11702,
+    "positive_examples": 13,
+    "top_k": 500,
+    "model": {
+      "k": 500.0,
+      "precision": 0.01,
+      "recall": 0.38461538461538464,
+      "lift": 9.001538461538463
+    },
+    "epss_only": {
+      "k": 500.0,
+      "precision": 0.004,
+      "recall": 0.15384615384615385,
+      "lift": 3.600615384615385
+    },
+    "public_exploit_then_epss": {
+      "k": 500.0,
+      "precision": 0.01,
+      "recall": 0.38461538461538464,
+      "lift": 9.001538461538463
+    }
+  },
+  "summary_backend": "deterministic local summary (watsonx credentials not configured)",
+  "output_dir": "C:\\projects\\IBM\\output"
+}
