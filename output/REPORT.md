@@ -102,7 +102,7 @@ The historical cohort uses CVEs published January 2024–September 2025. Snapsho
 
 ## IBM technology
 
-The project includes an IBM watsonx.ai integration for **IBM Granite** (`ibm/granite-3-3-8b-instruct`) to draft a grounded executive summary using the top-ranked results. Configure `WATSONX_APIKEY` and `WATSONX_PROJECT_ID` (and optionally `WATSONX_URL`, `WATSONX_GRANITE_MODEL`) to invoke it. This run's summary backend is reported above; no Granite-generated text is claimed when credentials are absent. The ranking model itself is a transparent local logistic regression and does not depend on Granite.
+The project can draft its executive summary with IBM Granite either through watsonx.ai or a local vLLM-compatible server. For watsonx.ai, configure `WATSONX_APIKEY` and `WATSONX_PROJECT_ID` (and optionally `WATSONX_URL`, `WATSONX_GRANITE_MODEL`). For local inference, set `WATSONX_BACKEND=local`, run a vLLM server exposing an OpenAI-compatible API, and configure `GRANITE_BASE_URL` and `GRANITE_MODEL`. The backend used for this run is reported above. Granite drafts report prose only; benchmark scores and rankings are produced by the transparent local logistic regression and do not depend on Granite.
 
 ## Important limitations and fairness
 
@@ -122,5 +122,23 @@ python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 python vulnrank.py --data-dir data\data --output-dir output
 ```
+
+For local IBM Granite 4.2 with vLLM, start the server in a supported Linux/GPU environment (for example WSL2):
+
+```bash
+pip install "vllm>=0.20"
+vllm serve ibm-granite/granite-4.2-3b --served-model-name granite-4.2-3b
+```
+
+In PowerShell, select the local API and rerun the pipeline:
+
+```powershell
+$env:WATSONX_BACKEND = "local"
+$env:GRANITE_BASE_URL = "http://127.0.0.1:8000/v1"
+$env:GRANITE_MODEL = "granite-4.2-3b"
+python vulnrank.py --data-dir data\data --output-dir output
+```
+
+The local backend sends a chat-completions request to vLLM. If the server is unavailable or the model name is wrong, the run fails explicitly rather than silently claiming Granite was used.
 
 Outputs: `REPORT.md`, `top500.csv`, `ranked_vulnerabilities.csv`, and `run_summary.json` in the output directory.

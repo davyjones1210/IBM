@@ -60,13 +60,30 @@ The model score is a relative ranking signal, **not a calibrated probability or 
 
 ## IBM technology
 
-The project supports **IBM Granite through watsonx.ai** for generating a short, evidence-grounded report summary. The model is configurable with environment variables:
+The project supports **IBM Granite** for generating a short, evidence-grounded report summary, either through watsonx.ai or locally using vLLM (no IBM Cloud credentials required). The risk-ranking model remains a local logistic regression; Granite generates report prose only and does not change benchmark scores or rankings.
 
+For watsonx.ai, configure:
 - `WATSONX_APIKEY`
 - `WATSONX_PROJECT_ID`
 - Optional: `WATSONX_URL` and `WATSONX_GRANITE_MODEL`
 
-By default the model ID is `ibm/granite-3-3-8b-instruct`. If watsonx credentials are absent, the report uses a deterministic local summary and says so; the risk-ranking model remains local and reproducible. The code does not claim that Granite ran unless the configured watsonx call succeeds.
+For local Granite 4.2 served through vLLM, start a server in a supported Linux/GPU environment (such as WSL2):
+
+```bash
+pip install "vllm>=0.20"
+vllm serve ibm-granite/granite-4.2-3b --served-model-name granite-4.2-3b
+```
+
+In PowerShell, select local inference:
+
+```powershell
+$env:WATSONX_BACKEND = "local"
+$env:GRANITE_BASE_URL = "http://127.0.0.1:8000/v1"
+$env:GRANITE_MODEL = "granite-4.2-3b"
+python vulnrank.py --data-dir data\data --output-dir output
+```
+
+The local server uses vLLM's OpenAI-compatible chat-completions API; it requires no IBM Cloud API key or project ID. The default backend is watsonx.ai. If its credentials are absent, the report uses a deterministic local summary. An explicitly selected but unavailable local Granite server causes an error rather than silently falling back. See the report's `Summary backend` line to confirm whether Granite generated the summary.
 
 ## Run
 

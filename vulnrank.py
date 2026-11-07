@@ -27,7 +27,8 @@ HORIZON_DAYS = 90
 KEV_CUTOFF = date(2025, 12, 31)
 HOLDOUT_START = "2025-07"
 HOLDOUT_END = "2025-09"
-GRANITE_MODEL = "ibm/granite-3-3-8b-instruct"
+WATSONX_GRANITE_MODEL = "ibm/granite-3-3-8b-instruct"
+LOCAL_GRANITE_MODEL = "granite-4.2-3b"
 
 
 @dataclass
@@ -231,7 +232,7 @@ def _watsonx_granite_summary(top_rows: Sequence[Mapping[str, str]]) -> str | Non
         return None
 
     base_url = os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com").rstrip("/")
-    model_id = os.getenv("WATSONX_GRANITE_MODEL", GRANITE_MODEL)
+    model_id = os.getenv("WATSONX_GRANITE_MODEL", WATSONX_GRANITE_MODEL)
     token_request = urllib.request.Request(
         "https://iam.cloud.ibm.com/identity/token",
         data=urllib.parse.urlencode(
@@ -275,6 +276,63 @@ def _watsonx_granite_summary(top_rows: Sequence[Mapping[str, str]]) -> str | Non
     if not generated:
         raise ValueError("watsonx Granite returned an empty summary.")
     return generated
+
+
+def _local_granite_summary(top_rows: Sequence[Mapping[str, str]]) -> str:
+    base_url = os.getenv("GRANITE_BASE_URL", "http://127.0.0.1:8000/v1").rstrip("/")
+    model_id = os.getenv("GRANITE_MODEL", LOCAL_GRANITE_MODEL)
+    prompt = (
+        "Write a concise, evidence-grounded executive summary of this vulnerability "
+        "ranking. Do not claim exploitation is confirmed; scores are model rankings. "
+        "Recommend engineers validate asset exposure and patch feasibility. "
+        "Top-ranked rows (rank, CVE, score, EPSS, public-signal explanation):\n"
+        + json.dumps(list(top_rows), ensure_ascii=True)
+    )
+    payload = {
+        "model": model_id,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 350,
+        "temperature": 0.2,
+    }
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    api_key = os.getenv("GRANITE_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    request = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=180) as response:
+        result = json.load(response)
+    try:
+        generated = result["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError, AttributeError) as exc:
+        raise ValueError("Local Granite API returned an invalid chat completion.") from exc
+    if not generated:
+        raise ValueError("Local Granite API returned an empty summary.")
+    return generated
+
+
+def _generate_granite_summary(
+    top_rows: Sequence[Mapping[str, str]],
+) -> tuple[str | None, str]:
+    backend = os.getenv("WATSONX_BACKEND", "watsonx").strip().lower()
+    if backend == "local":
+        model_id = os.getenv("GRANITE_MODEL", LOCAL_GRANITE_MODEL)
+        return (
+            _local_granite_summary(top_rows),
+            f"local IBM Granite via vLLM ({model_id})",
+        )
+    if backend != "watsonx":
+        raise ValueError("WATSONX_BACKEND must be either 'watsonx' or 'local'.")
+
+    model_id = os.getenv("WATSONX_GRANITE_MODEL", WATSONX_GRANITE_MODEL)
+    summary = _watsonx_granite_summary(top_rows)
+    if summary:
+        return summary, f"IBM watsonx.ai Granite ({model_id})"
+    return None, "deterministic local summary (watsonx credentials not configured)"
 
 
 def _write_csv(path: Path, rows: Iterable[Mapping[str, object]], fields: Sequence[str]) -> None:
@@ -361,8 +419,7 @@ def generate(data_dir: Path, output_dir: Path) -> dict[str, object]:
     )
     _write_csv(output_dir / "top500.csv", ranked[:500], ("cve_id",))
 
-    granite_summary = _watsonx_granite_summary(ranked[:10])
-    backend = "IBM watsonx.ai Granite (" + os.getenv("WATSONX_GRANITE_MODEL", GRANITE_MODEL) + ")" if granite_summary else "deterministic local summary (watsonx credentials not configured)"
+    granite_summary, backend = _generate_granite_summary(ranked[:10])
     positive_rates = {
         month: {
             "examples": int(np.sum(month_array == month)),
@@ -506,7 +563,7 @@ The historical cohort uses CVEs published January 2024–September 2025. Snapsho
 
 ## IBM technology
 
-The project includes an IBM watsonx.ai integration for **IBM Granite** (`{os.getenv("WATSONX_GRANITE_MODEL", GRANITE_MODEL)}`) to draft a grounded executive summary using the top-ranked results. Configure `WATSONX_APIKEY` and `WATSONX_PROJECT_ID` (and optionally `WATSONX_URL`, `WATSONX_GRANITE_MODEL`) to invoke it. This run's summary backend is reported above; no Granite-generated text is claimed when credentials are absent. The ranking model itself is a transparent local logistic regression and does not depend on Granite.
+The project can draft its executive summary with IBM Granite either through watsonx.ai or a local vLLM-compatible server. For watsonx.ai, configure `WATSONX_APIKEY` and `WATSONX_PROJECT_ID` (and optionally `WATSONX_URL`, `WATSONX_GRANITE_MODEL`). For local inference, set `WATSONX_BACKEND=local`, run a vLLM server exposing an OpenAI-compatible API, and configure `GRANITE_BASE_URL` and `GRANITE_MODEL`. The backend used for this run is reported above. Granite drafts report prose only; benchmark scores and rankings are produced by the transparent local logistic regression and do not depend on Granite.
 
 ## Important limitations and fairness
 
@@ -527,6 +584,24 @@ python -m unittest discover -s tests -v
 python vulnrank.py --data-dir data\\data --output-dir output
 ```
 
+For local IBM Granite 4.2 with vLLM, start the server in a supported Linux/GPU environment (for example WSL2):
+
+```bash
+pip install "vllm>=0.20"
+vllm serve ibm-granite/granite-4.2-3b --served-model-name granite-4.2-3b
+```
+
+In PowerShell, select the local API and rerun the pipeline:
+
+```powershell
+$env:WATSONX_BACKEND = "local"
+$env:GRANITE_BASE_URL = "http://127.0.0.1:8000/v1"
+$env:GRANITE_MODEL = "granite-4.2-3b"
+python vulnrank.py --data-dir data\\data --output-dir output
+```
+
+The local backend sends a chat-completions request to vLLM. If the server is unavailable or the model name is wrong, the run fails explicitly rather than silently claiming Granite was used.
+
 Outputs: `REPORT.md`, `top500.csv`, `ranked_vulnerabilities.csv`, and `run_summary.json` in the output directory.
 """
 
@@ -538,7 +613,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     summary = generate(args.data_dir, args.output_dir)
     print(json.dumps(summary, indent=2))
-    if "WATSONX_APIKEY" not in os.environ or "WATSONX_PROJECT_ID" not in os.environ:
+    backend = os.getenv("WATSONX_BACKEND", "watsonx").strip().lower()
+    if backend == "local":
+        print(
+            "Using local IBM Granite via the configured vLLM-compatible API.",
+            file=sys.stderr,
+        )
+    elif "WATSONX_APIKEY" not in os.environ or "WATSONX_PROJECT_ID" not in os.environ:
         print(
             "Notice: IBM watsonx.ai Granite was not invoked because its credentials are not configured.",
             file=sys.stderr,
